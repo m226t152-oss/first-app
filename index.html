@@ -1,1 +1,771 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>水晶探し - Crystal Hunt</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Hiragino Mincho ProN', 'MS Mincho', serif; }
+        
+        /* Title Screen Styles */
+        #title-screen {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: radial-gradient(circle, #1a0000 0%, #000 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            color: #d1d1d1;
+            transition: opacity 1s;
+        }
+        #title-text {
+            font-size: clamp(3rem, 10vw, 6rem);
+            letter-spacing: 1.5rem;
+            color: #fff;
+            text-shadow: 0 0 20px #f00, 0 0 40px #000;
+            margin-bottom: 2rem;
+            font-weight: bold;
+            text-align: center;
+        }
+        #start-prompt {
+            font-size: 1.5rem;
+            animation: pulse 2s infinite;
+            color: #aaa;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
 
+        #ui-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            color: #d1d1d1;
+            display: none;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 40px;
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 6px; height: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+        }
+        #vignette {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: radial-gradient(circle, transparent 15%, black 110%);
+            pointer-events: none;
+        }
+        #warning-ui {
+            position: absolute;
+            top: 80px; left: 50%;
+            transform: translateX(-50%);
+            color: #f00;
+            font-weight: 900;
+            font-size: 3.5rem;
+            text-shadow: 0 0 20px #000;
+            display: none;
+            animation: blink 0.15s infinite;
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.1; }
+        }
+        #crystal-count {
+            position: absolute;
+            top: 20px; left: 20px;
+            font-size: 1.5rem;
+            color: #0cf;
+            text-shadow: 0 0 10px #06a;
+            display: none;
+        }
+        #interaction-prompt {
+            position: absolute;
+            top: 60%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            font-size: 1.2rem;
+            display: none;
+        }
+        #settings-menu {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(10, 10, 10, 0.95);
+            padding: 30px;
+            border-radius: 10px;
+            border: 1px solid #444;
+            color: #eee;
+            display: none;
+            z-index: 200;
+            width: 320px;
+            pointer-events: auto;
+        }
+        .setting-item { margin-bottom: 20px; }
+        input[type=range] { width: 100%; accent-color: #900; cursor: pointer; }
+        
+        #scare-container {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: #000;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            overflow: hidden;
+        }
+        .shake { animation: shake 0.08s infinite; }
+        @keyframes shake {
+            0% { transform: translate(4px, 2px) rotate(0deg); }
+            50% { transform: translate(-4px, -2px) rotate(1deg); }
+            100% { transform: translate(4px, 2px) rotate(0deg); }
+        }
+        #retry-msg {
+            position: absolute;
+            bottom: 20%;
+            color: white;
+            font-size: 1.5rem;
+            display: none;
+            z-index: 1001;
+            text-align: center;
+            width: 100%;
+            text-shadow: 0 0 10px #f00;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Title Screen -->
+    <div id="title-screen">
+        <h1 id="title-text">水晶探し</h1>
+        <p id="start-prompt">クリック または Enterキー で開始</p>
+    </div>
+
+    <div id="vignette"></div>
+    <div id="crosshair"></div>
+    <div id="warning-ui">逃げろ！</div>
+    <div id="crystal-count">水晶: 0 / 3</div>
+    <div id="interaction-prompt">[E] 水晶を拾う</div>
+
+    <div id="ui-overlay">
+        <div id="status" class="text-xl">失われた3つの水晶を奪還せよ...</div>
+        <div id="message-box" class="text-white text-lg text-center absolute bottom-1/4 left-1/2 -translate-x-1/2 opacity-0 transition-opacity duration-1000"></div>
+        <div class="text-xs opacity-50">
+            WASD: 移動 | Shift: 走る | F: 懐中電灯 | E: 回収 | M: 設定
+        </div>
+    </div>
+
+    <div id="settings-menu">
+        <h2 class="text-xl font-bold mb-6 text-center border-b border-red-900 pb-2">環境設定</h2>
+        <div class="setting-item">
+            <label class="block text-sm mb-2 text-gray-400">カメラ感度</label>
+            <input type="range" id="sensitivity-slider" min="0.5" max="5.0" step="0.1" value="2.0">
+        </div>
+        <div class="setting-item">
+            <label class="block text-sm mb-2 text-gray-400">光量</label>
+            <input type="range" id="brightness-slider" min="0.5" max="15.0" step="0.1" value="8.0">
+        </div>
+        <div class="setting-item">
+            <label class="block text-sm mb-2 text-gray-400">音量</label>
+            <input type="range" id="volume-slider" min="0" max="1.0" step="0.05" value="0.5">
+        </div>
+        <button id="close-settings" class="w-full bg-red-900 hover:bg-red-700 text-white py-2 rounded">戻る</button>
+    </div>
+
+    <div id="scare-container">
+        <div class="shake">
+            <div style="width:450px; height:550px; background:#ccc; border-radius:50% 50% 20% 20%; box-shadow: 0 0 100px #f00;">
+                <div style="position:absolute; top:120px; left:80px; width:100px; height:120px; background:#000; border-radius:50%; box-shadow: 0 0 30px #f00;"></div>
+                <div style="position:absolute; top:120px; right:80px; width:100px; height:120px; background:#000; border-radius:50%; box-shadow: 0 0 30px #f00;"></div>
+                <div style="position:absolute; bottom:60px; left:120px; width:200px; height:200px; background:#000; border-radius:10% 10% 50% 50%;"></div>
+            </div>
+        </div>
+    </div>
+    <div id="retry-msg">いずれかのキー または クリックでタイトルへ</div>
+
+    <script>
+        let scene, camera, renderer, goal, navArrow;
+        let moveState = { f: false, b: false, l: false, r: false, shift: false };
+        let pitch = 0, yaw = 0;
+        let flashLight, ambLight;
+        let isGameOver = false, isMenuOpen = false, lightOn = true;
+        let gameState = 'title'; // 'title', 'playing', 'gameover', 'clear'
+        let clock = new THREE.Clock();
+
+        let sensitivity = 0.002, brightnessValue = 8.0, volumeLevel = 0.5;
+        let audioCtx, chaseOsc = [], chaseGain;
+        
+        let ghosts = [];
+        const GHOST_COUNT = 3;
+        
+        let crystals = [];
+        let collectedCrystals = 0;
+        const INTERACTION_DIST = 2.5;
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x010101);
+            scene.fog = new THREE.Fog(0x000000, 2, 22);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            // User gesture handlers
+            const handleUserGesture = (e) => {
+                if(gameState === 'title') {
+                    if (e.type === 'mousedown' || (e.type === 'keydown' && e.code === 'Enter')) {
+                        startGame();
+                    }
+                } else if(gameState === 'gameover' || gameState === 'clear') {
+                    // Return to title on any interaction after game ends
+                    returnToTitle();
+                } else if (!isMenuOpen) {
+                    if (e.type === 'mousedown') {
+                        document.body.requestPointerLock();
+                    }
+                }
+            };
+
+            document.addEventListener('mousedown', handleUserGesture);
+            document.addEventListener('keydown', handleUserGesture);
+
+            document.addEventListener('pointerlockchange', () => {
+                if (gameState === 'playing' && !isGameOver) {
+                    showMenu(document.pointerLockElement !== document.body);
+                }
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (document.pointerLockElement === document.body) {
+                    yaw -= e.movementX * sensitivity;
+                    pitch -= e.movementY * sensitivity;
+                    pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitch));
+                }
+            });
+
+            document.addEventListener('keydown', (e) => {
+                if(gameState !== 'playing' || isGameOver) return;
+                
+                if (e.code === 'KeyM') {
+                    if (isMenuOpen) {
+                        document.body.requestPointerLock();
+                    } else {
+                        document.exitPointerLock();
+                    }
+                }
+                if (e.code === 'KeyF' && !isMenuOpen) toggleLight();
+                if (e.code === 'KeyE' && !isMenuOpen) tryInteract();
+                handleKey(e.code, true);
+            });
+            document.addEventListener('keyup', (e) => handleKey(e.code, false));
+
+            // Settings Listeners
+            document.getElementById('sensitivity-slider').oninput = (e) => sensitivity = parseFloat(e.target.value) * 0.001;
+            document.getElementById('brightness-slider').oninput = (e) => {
+                brightnessValue = parseFloat(e.target.value);
+                if(flashLight) flashLight.intensity = lightOn ? brightnessValue : 0;
+            };
+            document.getElementById('volume-slider').oninput = (e) => volumeLevel = parseFloat(e.target.value);
+            document.getElementById('close-settings').onclick = () => document.body.requestPointerLock();
+
+            // Setup World Objects
+            setupLights();
+            createGround();
+            setupNavigationArrow();
+            setupWorld();
+
+            window.addEventListener('resize', onWindowResize);
+            animate();
+        }
+
+        function setupLights() {
+            ambLight = new THREE.AmbientLight(0x111111, 0.3);
+            scene.add(ambLight);
+            
+            flashLight = new THREE.SpotLight(0xffffff, brightnessValue, 25, Math.PI/7, 0.5, 0.5);
+            flashLight.castShadow = true;
+            scene.add(flashLight);
+            scene.add(flashLight.target);
+        }
+
+        function setupNavigationArrow() {
+            const arrowGeo = new THREE.ConeGeometry(0.15, 0.6, 4);
+            const arrowMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.6 });
+            navArrow = new THREE.Mesh(arrowGeo, arrowMat);
+            navArrow.rotation.x = Math.PI / 2;
+            scene.add(navArrow);
+        }
+
+        function startGame() {
+            if (gameState !== 'title') return;
+            
+            if (!audioCtx) initAudio();
+            document.body.requestPointerLock();
+
+            gameState = 'playing';
+            isGameOver = false;
+            
+            const titleScreen = document.getElementById('title-screen');
+            titleScreen.style.opacity = '0';
+            
+            setTimeout(() => {
+                titleScreen.style.display = 'none';
+                document.getElementById('ui-overlay').style.display = 'flex';
+                document.getElementById('crystal-count').style.display = 'block';
+                document.getElementById('crosshair').style.display = 'block';
+                document.getElementById('status').innerText = "失われた3つの水晶を奪還せよ...";
+                document.getElementById('status').style.color = "#d1d1d1";
+                showMessage("全ての水晶を集め、最奥の門へ辿り着け。", 5000);
+            }, 1000);
+        }
+
+        function returnToTitle() {
+            gameState = 'title';
+            isGameOver = false;
+            
+            // Reset UI
+            document.getElementById('scare-container').style.display = 'none';
+            document.getElementById('retry-msg').style.display = 'none';
+            document.getElementById('ui-overlay').style.display = 'none';
+            document.getElementById('crystal-count').style.display = 'none';
+            document.getElementById('crosshair').style.display = 'none';
+            document.getElementById('warning-ui').style.display = 'none';
+            
+            const titleScreen = document.getElementById('title-screen');
+            titleScreen.style.display = 'flex';
+            setTimeout(() => { titleScreen.style.opacity = '1'; }, 10);
+            
+            // Rebuild world
+            setupWorld();
+        }
+
+        function createGround() {
+            const dirtGeo = new THREE.PlaneGeometry(1000, 1000);
+            const dirtMat = new THREE.MeshStandardMaterial({ color: 0x1a1510, roughness: 1 });
+            const dirt = new THREE.Mesh(dirtGeo, dirtMat);
+            dirt.rotation.x = -Math.PI / 2;
+            dirt.position.y = -0.01;
+            scene.add(dirt);
+
+            const pathGeo = new THREE.PlaneGeometry(12, 1000);
+            const pathMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.8 });
+            const path = new THREE.Mesh(pathGeo, pathMat);
+            path.rotation.x = -Math.PI / 2;
+            scene.add(path);
+        }
+
+        function setupWorld() {
+            // Cleanup existing world objects
+            scene.children.filter(c => c.isGroup).forEach(c => scene.remove(c));
+            crystals = [];
+            ghosts = [];
+            collectedCrystals = 0;
+            updateUI();
+
+            camera.position.set(0, 1.6, 15);
+            yaw = 0; pitch = 0;
+
+            for(let i=0; i<80; i++) {
+                const z = -i * 12;
+                createTorii(Math.sin(i*0.5)*2, 0, z);
+                if(i % 3 === 0) {
+                    createLantern(6.5, 0, z + 5);
+                    createLantern(-6.5, 0, z + 5);
+                }
+                if(i % 10 === 5) {
+                    createWall(15 + Math.random()*5, 0, z, Math.random()*Math.PI);
+                }
+            }
+
+            for(let i=0; i<3; i++) {
+                createCrystal((Math.random()-0.5)*40, 1.2, -50 - (Math.random()*250));
+            }
+
+            createGoal((Math.random()-0.5)*60, 0, -350);
+            goal.parent.visible = false;
+
+            for (let i = 0; i < GHOST_COUNT; i++) {
+                const ghost = createGhost();
+                ghost.position.set((Math.random()-0.5)*30, 0, -50 - (i * 100));
+                scene.add(ghost);
+                ghosts.push({
+                    mesh: ghost,
+                    state: 'patrol',
+                    patrolTarget: new THREE.Vector3((Math.random()-0.5)*40, 0, ghost.position.z - 50),
+                    speed: 0.045 + (Math.random()*0.02),
+                    stepTimer: 0
+                });
+            }
+        }
+
+        function createCrystal(x, y, z) {
+            const group = new THREE.Group();
+            const geo = new THREE.OctahedronGeometry(0.5);
+            const mat = new THREE.MeshPhongMaterial({ color: 0x00ffff, emissive: 0x00aaff, shininess: 100 });
+            const mesh = new THREE.Mesh(geo, mat);
+            const light = new THREE.PointLight(0x00ffff, 3, 8);
+            group.add(mesh, light);
+            group.position.set(x, y, z);
+            scene.add(group);
+            crystals.push(group);
+        }
+
+        function createTorii(x, y, z) {
+            const group = new THREE.Group();
+            const mat = new THREE.MeshStandardMaterial({ color: 0x880000 });
+            const pL = new THREE.Mesh(new THREE.BoxGeometry(0.6, 8, 0.6), mat);
+            pL.position.set(-5, 4, 0);
+            const pR = new THREE.Mesh(new THREE.BoxGeometry(0.6, 8, 0.6), mat);
+            pR.position.set(5, 4, 0);
+            const top = new THREE.Mesh(new THREE.BoxGeometry(12, 0.6, 0.8), mat);
+            top.position.set(0, 7.8, 0);
+            group.add(pL, pR, top);
+            group.position.set(x, y, z);
+            scene.add(group);
+        }
+
+        function createLantern(x, y, z) {
+            const group = new THREE.Group();
+            const mat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+            const base = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.4, 0.8), mat);
+            const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.3, 2.5), mat);
+            pillar.position.y = 1.25;
+            const head = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mat);
+            head.position.y = 2.8;
+            const top = new THREE.Mesh(new THREE.ConeGeometry(0.8, 0.5, 4), mat);
+            top.position.y = 3.5;
+            const light = new THREE.PointLight(0xffaa44, 1.5, 10);
+            light.position.y = 2.8;
+            group.add(base, pillar, head, top, light);
+            group.position.set(x, y, z);
+            scene.add(group);
+        }
+
+        function createWall(x, y, z, rot) {
+            const group = new THREE.Group();
+            const mat = new THREE.MeshStandardMaterial({ color: 0x222211 });
+            const wall = new THREE.Mesh(new THREE.BoxGeometry(10, 4, 0.5), mat);
+            wall.position.y = 2;
+            const roof = new THREE.Mesh(new THREE.BoxGeometry(10.5, 0.3, 1), mat);
+            roof.position.y = 4.1;
+            group.add(wall, roof);
+            group.position.set(x, y, z);
+            group.rotation.y = rot;
+            scene.add(group);
+        }
+
+        function createGoal(x, y, z) {
+            const group = new THREE.Group();
+            const geo = new THREE.TorusGeometry(5, 0.4, 16, 100);
+            const mat = new THREE.MeshBasicMaterial({ color: 0x00ffff });
+            goal = new THREE.Mesh(geo, mat);
+            goal.rotation.x = Math.PI / 2;
+            const light = new THREE.PointLight(0x00ffff, 15, 30);
+            group.add(goal, light);
+            group.position.set(x, 0.1, z);
+            scene.add(group);
+        }
+
+        function createGhost() {
+            const group = new THREE.Group();
+            const body = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 1.2, 4, 8), new THREE.MeshStandardMaterial({color:0xffffff, transparent:true, opacity:0.8}));
+            body.position.y = 2;
+            const head = new THREE.Mesh(new THREE.SphereGeometry(0.7, 16, 16), new THREE.MeshStandardMaterial({color:0xffffff}));
+            head.position.y = 4.2;
+            const eyeGeo = new THREE.SphereGeometry(0.15, 8, 8);
+            const eyeMat = new THREE.MeshBasicMaterial({color:0xff0000});
+            const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+            eyeL.position.set(-0.3, 0.1, 0.5);
+            const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+            eyeR.position.set(0.3, 0.1, 0.5);
+            head.add(eyeL, eyeR);
+            group.add(body, head);
+            return group;
+        }
+
+        function updateUI() {
+            document.getElementById('crystal-count').innerText = `水晶: ${collectedCrystals} / 3`;
+            if (collectedCrystals >= 3 && goal) {
+                goal.parent.visible = true;
+                document.getElementById('status').innerText = "封印解除。光の門へ急げ。";
+                document.getElementById('status').style.color = "#0ff";
+            }
+        }
+
+        function tryInteract() {
+            crystals.forEach((c, idx) => {
+                const dist = camera.position.distanceTo(c.position);
+                if (dist < INTERACTION_DIST) {
+                    const toObj = new THREE.Vector3().subVectors(c.position, camera.position).normalize();
+                    const look = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+                    if (look.dot(toObj) > 0.85) {
+                        scene.remove(c);
+                        crystals.splice(idx, 1);
+                        collectedCrystals++;
+                        playSfx('pickup');
+                        updateUI();
+                        showMessage("水晶の残響を感じる...", 2000);
+                    }
+                }
+            });
+        }
+
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            chaseGain = audioCtx.createGain();
+            chaseGain.gain.setValueAtTime(0, audioCtx.currentTime);
+            chaseGain.connect(audioCtx.destination);
+            for(let i=0; i<3; i++) {
+                let osc = audioCtx.createOscillator();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(35 + (i * 2.2), audioCtx.currentTime);
+                osc.connect(chaseGain);
+                osc.start();
+                chaseOsc.push(osc);
+            }
+        }
+
+        function playSfx(type, customVol = 1) {
+            if(!audioCtx || volumeLevel <= 0) return;
+            const o = audioCtx.createOscillator();
+            const g = audioCtx.createGain();
+            let dur = 0.1;
+
+            if(type === 'pickup') {
+                o.type = 'sine';
+                o.frequency.setValueAtTime(600, audioCtx.currentTime);
+                o.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.2);
+                g.gain.setValueAtTime(0.1 * volumeLevel, audioCtx.currentTime);
+                dur = 0.2;
+            } else if(type === 'player_step') {
+                o.type = 'triangle';
+                o.frequency.setValueAtTime(60 + Math.random()*20, audioCtx.currentTime);
+                g.gain.setValueAtTime(0.05 * volumeLevel * customVol, audioCtx.currentTime);
+                dur = 0.1;
+            } else if(type === 'ghost_step') {
+                o.type = 'square';
+                o.frequency.setValueAtTime(30 + Math.random()*10, audioCtx.currentTime);
+                g.gain.setValueAtTime(0.15 * volumeLevel * customVol, audioCtx.currentTime);
+                dur = 0.3;
+            }
+
+            g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+            o.connect(g).connect(audioCtx.destination);
+            o.start(); o.stop(audioCtx.currentTime + dur);
+        }
+
+        function handleKey(code, isDown) {
+            if(gameState !== 'playing' || isMenuOpen || isGameOver) return;
+            if(code === 'KeyW') moveState.f = isDown;
+            if(code === 'KeyS') moveState.b = isDown;
+            if(code === 'KeyA') moveState.l = isDown;
+            if(code === 'KeyD') moveState.r = isDown;
+            if(code === 'ShiftLeft' || code === 'ShiftRight') moveState.shift = isDown;
+        }
+
+        function toggleLight() {
+            lightOn = !lightOn;
+            flashLight.intensity = lightOn ? brightnessValue : 0;
+        }
+
+        function showMenu(show) {
+            isMenuOpen = show;
+            document.getElementById('settings-menu').style.display = show ? 'block' : 'none';
+        }
+
+        function showMessage(txt, duration) {
+            const el = document.getElementById('message-box');
+            el.innerText = txt; el.style.opacity = 1;
+            setTimeout(() => { if(gameState === 'playing' && !isGameOver) el.style.opacity = 0; }, duration);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        let playerStepCounter = 0;
+        let heartTimer = 0;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            if (gameState === 'title') {
+                camera.position.z -= 0.005;
+                if(camera.position.z < 10) camera.position.z = 15;
+                camera.lookAt(0, 1.6, 0);
+            }
+
+            if (gameState === 'playing' && !isMenuOpen && !isGameOver) {
+                // Movement
+                camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+                const dir = new THREE.Vector3();
+                if (moveState.f) dir.z -= 1;
+                if (moveState.b) dir.z += 1;
+                if (moveState.l) dir.x -= 1;
+                if (moveState.r) dir.x += 1;
+                
+                if (dir.length() > 0) {
+                    dir.applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0)));
+                    dir.normalize();
+                    const speed = moveState.shift ? 0.18 : 0.08;
+                    camera.position.add(dir.multiplyScalar(speed));
+                    
+                    playerStepCounter += delta;
+                    if(playerStepCounter > (moveState.shift ? 0.22 : 0.38)) {
+                        playSfx('player_step', moveState.shift ? 1.5 : 1);
+                        playerStepCounter = 0;
+                    }
+                }
+
+                // Interaction UI Update
+                let canPick = false;
+                crystals.forEach(c => {
+                    if (camera.position.distanceTo(c.position) < INTERACTION_DIST) canPick = true;
+                });
+                document.getElementById('interaction-prompt').style.display = canPick ? 'block' : 'none';
+
+                // Arrow
+                let targetPos;
+                if (collectedCrystals < 3) {
+                    let minDist = 9999;
+                    crystals.forEach(c => {
+                        let d = camera.position.distanceTo(c.position);
+                        if (d < minDist) { minDist = d; targetPos = c.position; }
+                    });
+                } else {
+                    targetPos = goal.parent.position;
+                }
+                if (targetPos) {
+                    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0)));
+                    navArrow.position.copy(camera.position).add(forward.multiplyScalar(2.2));
+                    navArrow.position.y = 0.2;
+                    navArrow.lookAt(targetPos.x, 0.2, targetPos.z);
+                    navArrow.rotateX(Math.PI/2);
+                    navArrow.visible = true;
+                }
+
+                // Ghosts
+                let anyChase = false;
+                let nearestDist = 9999;
+                ghosts.forEach(g => {
+                    const dist = g.mesh.position.distanceTo(camera.position);
+                    if (dist < nearestDist) nearestDist = dist;
+                    const toPlayer = new THREE.Vector3().subVectors(camera.position, g.mesh.position).normalize();
+                    const ghostLook = new THREE.Vector3(0,0,1).applyQuaternion(g.mesh.quaternion);
+                    const isSeen = (dist < 18 && ghostLook.dot(toPlayer) > 0.1) || (dist < 6);
+
+                    if (isSeen) {
+                        g.state = 'chase';
+                        anyChase = true;
+                    } else if (g.state === 'chase' && dist > 25) {
+                        g.state = 'patrol';
+                    }
+
+                    if (g.state === 'chase') {
+                        g.mesh.position.add(toPlayer.multiplyScalar(0.095));
+                        g.mesh.lookAt(camera.position.x, 0, camera.position.z);
+                    } else {
+                        if (g.mesh.position.distanceTo(g.patrolTarget) < 2) {
+                            g.patrolTarget.set((Math.random()-0.5)*50, 0, g.mesh.position.z + (Math.random()-0.5)*60 - 30);
+                        }
+                        const patrolDir = new THREE.Vector3().subVectors(g.patrolTarget, g.mesh.position).normalize();
+                        g.mesh.position.add(patrolDir.multiplyScalar(g.speed));
+                        g.mesh.lookAt(g.patrolTarget.x, 0, g.patrolTarget.z);
+                    }
+
+                    if(dist < 20) {
+                        g.stepTimer += delta;
+                        const stepInt = g.state === 'chase' ? 0.3 : 0.6;
+                        if(g.stepTimer > stepInt) {
+                            playSfx('ghost_step', Math.max(0, 1 - (dist / 20)));
+                            g.stepTimer = 0;
+                        }
+                    }
+                    if (dist < 1.6) triggerJumpscare();
+                });
+
+                document.getElementById('warning-ui').style.display = anyChase ? 'block' : 'none';
+                if (chaseGain) chaseGain.gain.setTargetAtTime(anyChase ? 0.45 * volumeLevel : 0, audioCtx.currentTime, 0.2);
+
+                heartTimer += delta;
+                if (heartTimer > Math.max(0.1, nearestDist/15)) {
+                    if(audioCtx && volumeLevel > 0) {
+                        const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+                        o.frequency.setValueAtTime(40, audioCtx.currentTime);
+                        g.gain.setValueAtTime(Math.max(0, (1-(nearestDist/22))*volumeLevel*0.3), audioCtx.currentTime);
+                        o.connect(g).connect(audioCtx.destination);
+                        o.start(); o.stop(audioCtx.currentTime + 0.1);
+                    }
+                    heartTimer = 0;
+                }
+                
+                if (collectedCrystals >= 3 && camera.position.distanceTo(goal.parent.position) < 4.5) {
+                    triggerWin();
+                }
+            }
+
+            // Global FX
+            scene.children.forEach(c => {
+                if(c.isGroup && c.children[4] && c.children[4].isPointLight) {
+                    c.children[4].intensity = 1.5 + Math.sin(Date.now()*0.015)*0.5 + Math.random()*0.3;
+                }
+            });
+
+            flashLight.position.copy(camera.position);
+            const lt = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).add(camera.position);
+            flashLight.target.position.copy(lt);
+
+            renderer.render(scene, camera);
+        }
+
+        function triggerWin() {
+            isGameOver = true;
+            gameState = 'clear';
+            document.exitPointerLock();
+            if(chaseGain) chaseGain.gain.setValueAtTime(0, audioCtx.currentTime);
+            
+            document.getElementById('status').innerText = "生還。おめでとう。";
+            document.getElementById('status').style.color = "#fff";
+            document.getElementById('retry-msg').innerText = "生還を遂げた... [タイトルへ]";
+            document.getElementById('retry-msg').style.display = 'block';
+        }
+
+        function triggerJumpscare() {
+            isGameOver = true;
+            gameState = 'gameover';
+            document.exitPointerLock();
+            document.getElementById('scare-container').style.display = 'flex';
+            document.getElementById('retry-msg').innerText = "捕まった... [タイトルへ]";
+            document.getElementById('retry-msg').style.display = 'block';
+            document.getElementById('warning-ui').style.display = 'none';
+            if (chaseGain) chaseGain.gain.setValueAtTime(0, audioCtx.currentTime);
+            if(audioCtx) {
+                const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+                o.type = 'sawtooth'; o.frequency.setValueAtTime(80, audioCtx.currentTime);
+                o.frequency.exponentialRampToValueAtTime(10, audioCtx.currentTime + 2);
+                g.gain.setValueAtTime(volumeLevel, audioCtx.currentTime);
+                o.connect(g).connect(audioCtx.destination);
+                o.start();
+            }
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
